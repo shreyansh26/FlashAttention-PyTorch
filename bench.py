@@ -8,16 +8,18 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--type', type=str, required=True, help="flash/normal")
+parser.add_argument('--b', type=int, required=False, default=1, help="Batch size")
+parser.add_argument('--h', type=int, required=False, default=2, help="Number of heads")
 parser.add_argument('--q_len', type=int, required=False, default=4096, help="Length/first dimension of Q matrix")
 parser.add_argument('--kv_len', type=int, required=False, default=4096, help="Length/first dimension of K/V matrix")
-parser.add_argument('--b', type=int, required=False, default=2, help="Batch size")
+parser.add_argument('--d', type=int, required=False, default=512, help="Dimension of vector")
 parser.add_argument('--profile', action='store_true', help="For Pytorch profiling")
 
 args = parser.parse_args()
 
-Q = torch.randn(1, args.b, args.q_len, 512, requires_grad=True).to(device='cuda')
-K = torch.randn(1, args.b, args.kv_len, 512, requires_grad=True).to(device='cuda')
-V = torch.randn(1, args.b, args.kv_len, 512, requires_grad=True).to(device='cuda')
+Q = torch.randn(args.b, args.h, args.q_len, 512, requires_grad=True).to(device='cuda')
+K = torch.randn(args.b, args.h, args.kv_len, 512, requires_grad=True).to(device='cuda')
+V = torch.randn(args.b, args.h, args.kv_len, 512, requires_grad=True).to(device='cuda')
 mask = torch.randint(0, 2, (args.b, args.kv_len)).to(device='cuda')
 
 if args.type == "flash":
