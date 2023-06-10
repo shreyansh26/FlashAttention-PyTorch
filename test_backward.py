@@ -3,7 +3,7 @@ import torch
 def func(x):
     return torch.sum(x)
 
-x = torch.ones(5) * 2
+x = torch.ones(1,3,6) * 2
 x.requires_grad_()
 
 y = func(x)

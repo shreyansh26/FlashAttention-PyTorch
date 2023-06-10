@@ -32,28 +32,30 @@ def flash_attention_forward(Q, K, V, mask=None):
     Q_BLOCK_SIZE = min(BLOCK_SIZE, Q.shape[-1])
     KV_BLOCK_SIZE = BLOCK_SIZE
 
-    Q_BLOCKS = torch.split(Q, Q_BLOCK_SIZE, dim=2)
-    K_BLOCKS = torch.split(K, KV_BLOCK_SIZE, dim=2)
-    V_BLOCKS = torch.split(V, KV_BLOCK_SIZE, dim=2)
-    mask_BLOCKS = list(torch.split(mask, KV_BLOCK_SIZE, dim=1))
+    # Q_BLOCKS = torch.split(Q, Q_BLOCK_SIZE, dim=2)
+    # K_BLOCKS = torch.split(K, KV_BLOCK_SIZE, dim=2)
+    # V_BLOCKS = torch.split(V, KV_BLOCK_SIZE, dim=2)
+    # mask_BLOCKS = list(torch.split(mask, KV_BLOCK_SIZE, dim=1))
 
-    Tr = len(Q_BLOCKS)
-    Tc = len(K_BLOCKS)
+    Tr = Q.shape[2] // Q_BLOCK_SIZE
+    Tc = K.shape[2] // KV_BLOCK_SIZE
 
     O_BLOCKS = list(torch.split(O, Q_BLOCK_SIZE, dim=2))
-    l_BLOCKS = list(torch.split(l, Q_BLOCK_SIZE, dim=2))
-    m_BLOCKS = list(torch.split(m, Q_BLOCK_SIZE, dim=2))
+    # l_BLOCKS = list(torch.split(l, Q_BLOCK_SIZE, dim=2))
+    # m_BLOCKS = list(torch.split(m, Q_BLOCK_SIZE, dim=2))
 
     for j in range(Tc):
-        Kj = K_BLOCKS[j]
-        Vj = V_BLOCKS[j]
-        maskj = mask_BLOCKS[j]
+        j_index = torch.tensor(range(j*KV_BLOCK_SIZE,(j+1)*KV_BLOCK_SIZE)).to(device='cuda')
+        Kj = torch.index_select(K, dim=2, index=j_index)
+        Vj = torch.index_select(V, dim=2, index=j_index)
+        maskj = torch.index_select(mask, dim=1, index=j_index)
 
         for i in range(Tr):
-            Qi = Q_BLOCKS[i]
+            i_index = torch.tensor(range(i*Q_BLOCK_SIZE,(i+1)*Q_BLOCK_SIZE)).to(device='cuda')
+            Qi = torch.index_select(Q, dim=2, index=i_index)
             Oi = O_BLOCKS[i]
-            li = l_BLOCKS[i]
-            mi = m_BLOCKS[i]
+            li = torch.index_select(l, dim=2, index=i_index)
+            mi = torch.index_select(m, dim=2, index=i_index)
 
             scale = 1 / np.sqrt(Q.shape[-1])
             Qi_scaled  = Qi * scale
@@ -75,15 +77,15 @@ def flash_attention_forward(Q, K, V, mask=None):
 
             mi_new = torch.maximum(m_block_ij, mi)
             li_new = torch.exp(mi - mi_new) * li + torch.exp(m_block_ij - mi_new) * l_block_ij
-            
+
             O_BLOCKS[i] = (li/li_new) * torch.exp(mi - mi_new) * Oi + (torch.exp(m_block_ij - mi_new) / li_new) * P_block_ij_Vj
-            l_BLOCKS[i] = li_new
-            m_BLOCKS[i] = mi_new
+            l[:,:,i*Q_BLOCK_SIZE:(i+1)*Q_BLOCK_SIZE,:] = li_new
+            m[:,:,i*Q_BLOCK_SIZE:(i+1)*Q_BLOCK_SIZE,:] = mi_new
         
     O = torch.cat(O_BLOCKS, dim=2)
     return O
 
-def flash_attention(Q, K, V, mask):
+def flash_attention(Q, K, V, mask=None):
     out = flash_attention_forward(Q, K, V, mask)
     return out
 
