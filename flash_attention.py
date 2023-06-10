@@ -21,7 +21,7 @@ def normal_attention(Q, K, V, mask=None):
     return attn @ V
 
 def flash_attention_forward(Q, K, V, mask=None):
-    O = torch.zeros_like(Q)
+    O = torch.zeros_like(Q, requires_grad=True)
     l = torch.zeros(Q.shape[:-1])[...,None]
     m = torch.ones(Q.shape[:-1])[...,None] * NEG_INF
 
@@ -83,23 +83,23 @@ def flash_attention_forward(Q, K, V, mask=None):
     O = torch.cat(O_BLOCKS, dim=2)
     return O
 
-def flash_attention(Q, K, V, mask=None):
+def flash_attention(Q, K, V, mask):
     out = flash_attention_forward(Q, K, V, mask)
     return out
 
 if __name__ == "__main__":
-    Q = torch.randn(1, 2, 4096, 1024).to(device='cuda')
-    K = torch.randn(1, 2, 4096, 1024).to(device='cuda')
-    V = torch.randn(1, 2, 4096, 1024).to(device='cuda')
+    Q = torch.randn(1, 2, 4096, 1024, requires_grad=True).to(device='cuda')
+    K = torch.randn(1, 2, 4096, 1024, requires_grad=True).to(device='cuda')
+    V = torch.randn(1, 2, 4096, 1024, requires_grad=True).to(device='cuda')
     mask = torch.randint(0, 2, (2, 4096)).to(device='cuda')
 
     for i in range(10):
         start1 = time.time_ns()
-        out1, t1 = flash_attention(Q, K, V, mask)
+        out1 = flash_attention(Q, K, V, mask)
         end1 = time.time_ns()
 
         start2 = time.time_ns()
-        out2, t2 = normal_attention(Q, K, V, mask)
+        out2 = normal_attention(Q, K, V, mask)
         end2 = time.time_ns()
 
         t1 = (end1 - start1) / 1000000
