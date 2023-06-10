@@ -47,6 +47,7 @@ if args.profile:
             with_modules=False, # only for torchscript models atm
         ) as prof:
             flash_attention(Q, K, V, mask)
+        print(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
     else:
         with torch.profiler.profile(
             activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
@@ -58,3 +59,4 @@ if args.profile:
             with_modules=False, # only for torchscript models atm
         ) as prof:
             normal_attention(Q, K, V, mask)
+        print(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
