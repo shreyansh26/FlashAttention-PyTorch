@@ -1,10 +1,10 @@
 import time
 import torch
-from flash_attention import flash_attention, normal_attention
+from flash_attention_causal import flash_attention_causal, normal_attention_causal
 import argparse
 
-# flash_attention = torch.compile(flash_attention)
-# normal_attention = torch.compile(normal_attention)
+# flash_attention_causal = torch.compile(flash_attention_causal)
+# normal_attention_causal = torch.compile(normal_attention_causal)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--type', type=str, required=True, help="flash/normal")
@@ -20,24 +20,23 @@ args = parser.parse_args()
 Q = torch.randn(args.b, args.h, args.q_len, 512, requires_grad=True).to(device='cuda')
 K = torch.randn(args.b, args.h, args.kv_len, 512, requires_grad=True).to(device='cuda')
 V = torch.randn(args.b, args.h, args.kv_len, 512, requires_grad=True).to(device='cuda')
-mask = torch.randint(0, 2, (args.b, args.kv_len)).to(device='cuda')
 
 if args.type == "flash":
     for _ in range(10):
-        flash_attention(Q, K, V, mask)
-
+        flash_attention_causal(Q, K, V)
+        
     start = time.time_ns()
-    flash_attention(Q, K, V, mask)
+    flash_attention_causal(Q, K, V)
     end = time.time_ns()
 
     t = (end - start) / 1000000
     print(f'{t}ms')
 else:
     for _ in range(10):
-        normal_attention(Q, K, V, mask)
+        normal_attention_causal(Q, K, V)
         
     start = time.time_ns()
-    normal_attention(Q, K, V, mask)
+    normal_attention_causal(Q, K, V)
     end = time.time_ns()
 
     t = (end - start) / 1000000
@@ -54,7 +53,7 @@ if args.profile:
             with_flops=True,
             with_modules=False, # only for torchscript models atm
         ) as prof:
-            flash_attention(Q, K, V, mask)
+            flash_attention_causal(Q, K, V)
         print(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
     else:
         with torch.profiler.profile(
@@ -66,5 +65,5 @@ if args.profile:
             with_flops=True,
             with_modules=False, # only for torchscript models atm
         ) as prof:
-            normal_attention(Q, K, V, mask)
+            normal_attention_causal(Q, K, V)
         print(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
