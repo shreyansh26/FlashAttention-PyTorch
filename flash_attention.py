@@ -125,8 +125,6 @@ def flash_attention_backward(Q, K, V, mask, O, l, m, dO):
             li = l_BLOCKS[i]
             mi = m_BLOCKS[i]
 
-            dQi_block = torch.zeros_like(dQ_BLOCKS[i], requires_grad=True).to(device='cuda')
-
             scale = 1 / np.sqrt(Q.shape[-1])
             Qi_scaled  = Qi * scale
 
