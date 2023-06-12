@@ -3,9 +3,6 @@ import torch
 from flash_attention import flash_attention, normal_attention
 import argparse
 
-# flash_attention = torch.compile(flash_attention)
-# normal_attention = torch.compile(normal_attention)
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--type', type=str, required=True, help="flash/normal")
 parser.add_argument('--b', type=int, required=False, default=1, help="Batch size")
