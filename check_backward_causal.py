@@ -6,7 +6,6 @@ from torch.func import jacrev
 Q = torch.randn(1, 1, 2048, 512, requires_grad=True).to(device='cuda')
 K = torch.randn(1, 1, 2048, 512, requires_grad=True).to(device='cuda')
 V = torch.randn(1, 1, 2048, 512, requires_grad=True).to(device='cuda')
-mask = torch.randint(0, 2, (1, 2048)).to(device='cuda')
 
 def loss_fn(fn, *args):
     return torch.sum(fn(*args))
