@@ -17,9 +17,9 @@ parser.add_argument('--profile', action='store_true', help="For Pytorch profilin
 
 args = parser.parse_args()
 
-Q = torch.randn(args.b, args.h, args.q_len, 512, requires_grad=True).to(device='cuda')
-K = torch.randn(args.b, args.h, args.kv_len, 512, requires_grad=True).to(device='cuda')
-V = torch.randn(args.b, args.h, args.kv_len, 512, requires_grad=True).to(device='cuda')
+Q = torch.randn(args.b, args.h, args.q_len, args.d, requires_grad=True).to(device='cuda')
+K = torch.randn(args.b, args.h, args.kv_len, args.d, requires_grad=True).to(device='cuda')
+V = torch.randn(args.b, args.h, args.kv_len, args.d, requires_grad=True).to(device='cuda')
 
 if args.type == "flash":
     for _ in range(10):
