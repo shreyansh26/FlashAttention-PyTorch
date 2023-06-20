@@ -73,6 +73,10 @@ def flash_attention_forward(Q, K, V, mask=None):
 
             P_ij_Vj = torch.einsum('... i j, ... j d -> ... i d', P_ij, Vj)
 
+            m_block_ij = m_block_ij.to('cuda')
+            l_block_ij = l_block_ij.to('cuda')
+            P_ij_Vj = P_ij_Vj.to('cuda')
+
             mi_new = torch.maximum(m_block_ij, mi)
             li_new = torch.exp(mi - mi_new) * li + torch.exp(m_block_ij - mi_new) * l_block_ij
             
