@@ -1,8 +1,20 @@
 """FA2: sequence-parallel ownership with deferred output normalization.
 
-The simplified version keeps one query tile "owned" by the current loop body.
-Actual FA2 launches multiple CTAs over query rows in parallel; here we expose
-the same ownership structure while staying in plain PyTorch.
+Simplified algorithm in this module:
+1. Assign ownership of one query tile to each outer-loop iteration.
+2. For that owned query tile, stream over all K/V tiles and accumulate an
+   unnormalized output tile together with the running row max and row sum.
+3. Only after all K/V tiles have been processed for that query tile, apply the
+   final normalization step.
+4. In backward, keep the same ownership-oriented orchestration so the control
+   flow reflects the split-Q / sequence-parallel idea instead of the FA1
+   KV-outer loop structure.
+
+Compared with FA1, the educational improvement is the work partitioning:
+the code is organized around query-tile ownership, deferred normalization, and
+LSE-centered saved state. Real FA2 uses this style to expose more sequence
+parallelism and reduce non-matmul overhead; here we mirror that algorithmic
+shape without reproducing the CUDA launch details.
 """
 
 from __future__ import annotations

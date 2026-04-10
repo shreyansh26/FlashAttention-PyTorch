@@ -1,7 +1,19 @@
 """FA1: baseline tiled online-softmax attention.
 
-This module keeps the control flow intentionally close to the original paper:
-we stream K/V tiles outside the Q loop and update normalized outputs in place.
+Simplified algorithm in this module:
+1. Split the query rows and key/value rows into tiles.
+2. Keep one output tile together with per-row running statistics:
+   the running row max and the running normalization sum.
+3. Stream over K/V tiles outside the Q loop, compute the local score block,
+   update the online softmax state, and immediately fold the weighted value
+   contribution into the normalized output tile.
+4. In backward, recompute the local probabilities from the saved LSE-style
+   statistics instead of storing the full attention matrix.
+
+This is the closest educational version to the original FlashAttention paper.
+Its main improvement over naive attention is IO-awareness: it never
+materializes the full score or probability matrix in memory, and instead keeps
+only compact row-wise statistics plus the running output tile.
 """
 
 from __future__ import annotations

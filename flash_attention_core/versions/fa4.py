@@ -1,9 +1,23 @@
 """FA4: scheduled tiles with explicit main/softmax/correction phases.
 
-This educational version keeps the exact math identical to regular attention,
-but exposes the FA4-style role split and conditional rescaling. Real FA4 uses
-TMEM, async MMA pipelines, and more sophisticated tile schedulers; those
-hardware details are left in comments instead of being emulated directly.
+Simplified algorithm in this module:
+1. Build an explicit tile schedule that groups work into waves, so execution is
+   driven by scheduler metadata rather than only by nested loops.
+2. Split each wave into three conceptual roles:
+   a main score-production phase, a softmax-statistics phase, and a correction
+   phase that merges the new contribution into the running output state.
+3. Track whether a merge requires rescaling the accumulated state, so the code
+   makes the late / conditional rescaling decision visible even though the
+   actual tensor path remains mathematically exact and sequential.
+4. Reuse the same scheduled-wave view in backward so the version still reads
+   like a scheduler-driven algorithm rather than a generic tiled kernel.
+
+Compared with FA3, the educational improvement is the explicit scheduler and
+role split. Real FA4 further co-designs the algorithm around Blackwell-era
+features such as TMEM, async MMA, multi-role warpgroups, and deeper overlap.
+This module does not simulate those hardware details, but it does expose the
+main/softmax/correction decomposition and the conditional-rescaling idea that
+differentiate FA4 from the earlier versions.
 """
 
 from __future__ import annotations

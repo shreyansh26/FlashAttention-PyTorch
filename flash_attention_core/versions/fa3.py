@@ -1,8 +1,21 @@
 """FA3: staged producer/consumer pipeline with ping-pong buffers.
 
-We model the Hopper-era overlap structurally with named stages and two logical
-buffers. The real implementation uses TMA, WGMMA, and warp specialization;
-those hardware details are left as comments instead of simulated threads.
+Simplified algorithm in this module:
+1. Keep the FA2-style exact attention math, but reorganize execution into
+   explicit pipeline stages rather than a single monolithic loop body.
+2. Model a producer/consumer handoff with two logical tile buffers: one buffer
+   is "active" for the current K/V tile while the next tile is logically
+   prefetched into the other buffer.
+3. For each query tile, run the stages in order: load tile, compute score
+   block, update online softmax statistics, and apply the value contribution.
+4. Mirror the same staged structure in backward so the simplified code still
+   depicts the overlap-friendly orchestration.
+
+Compared with FA2, the educational improvement is pipeline structure. Real FA3
+uses Hopper features such as TMA, WGMMA, warp specialization, and ping-pong
+buffering to overlap data movement and compute. This module leaves those
+hardware mechanisms out, but keeps the stage boundaries and double-buffered
+control flow visible in plain PyTorch.
 """
 
 from __future__ import annotations
