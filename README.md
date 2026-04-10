@@ -53,9 +53,9 @@ python check_backward.py --version fa4 --causal --q_len 256 --kv_len 256 --d 64
 
 ```bash
 python -m unittest discover -s tests
-python -m unittest tests.test_flash_attention_long_smoke_cuda
+python -m unittest tests.test_flash_attention_long
 ```
 
 `python -m unittest discover -s tests` tells Python's built-in `unittest` runner to scan the [tests](tests) directory, find test files automatically, and run everything it discovers there. That is the command to use for the regular test suite.
 
-`python -m unittest tests.test_flash_attention_long_smoke_cuda` runs one specific test module directly. The long-sequence CUDA smoke test is called out separately because it is heavier than the rest of the suite and is mainly useful when you explicitly want the `kv_len=8192` coverage on GPU.
+`python -m unittest tests.test_flash_attention_long` runs one specific test module directly. The long-sequence test is called out separately because it is heavier than the rest of the suite and is mainly useful when you explicitly want the `kv_len=8192` coverage on GPU.
