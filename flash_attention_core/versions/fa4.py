@@ -51,7 +51,7 @@ class ScheduledTile:
 
 def _build_schedule(q_slices: list[slice], k_slices: list[slice]) -> list[list[ScheduledTile]]:
     waves = []
-    for wave_id, k_slice in enumerate(k_slices):
+    for wave_id, q_slice in enumerate(q_slices):
         # The schedule is intentionally explicit so readers can see that FA4 is
         # driven by scheduler metadata, not just by plain nested loops. Real FA4
         # uses a richer scheduler to map tiles to warpgroups / CTA roles.
@@ -59,12 +59,12 @@ def _build_schedule(q_slices: list[slice], k_slices: list[slice]) -> list[list[S
             [
                 ScheduledTile(
                     wave_id=wave_id,
-                    query_tile=query_tile,
-                    key_tile=wave_id,
+                    query_tile=wave_id,
+                    key_tile=key_tile,
                     q_slice=q_slice,
                     k_slice=k_slice,
                 )
-                for query_tile, q_slice in enumerate(q_slices)
+                for key_tile, k_slice in enumerate(k_slices)
             ]
         )
     return waves
@@ -115,6 +115,10 @@ def forward(
 
     q_slices = iter_block_slices(q.shape[2], config.block_size_q)
     k_slices = iter_block_slices(k.shape[2], config.block_size_kv)
+    # Each scheduled wave now owns one query tile and iterates across the K/V
+    # tiles for that query tile. That matches the FA4 forward mental model from
+    # the paper/blog more closely: load a Q tile, then loop over K/V blocks.
+    #
     # Each wave is processed in three conceptual roles:
     # 1. main score production
     # 2. softmax-statistics update
@@ -142,8 +146,8 @@ def forward(
     for wave in schedule:
         main_outputs = []
         for task in wave:
-            # Main role: produce score tiles for every scheduled query tile in
-            # the current wave.
+            # Main role: with one Q tile resident for this wave, step through the
+            # K/V tiles and produce the corresponding score tiles.
             main_outputs.append(
                 (
                     task,
@@ -235,8 +239,8 @@ def backward(
     for wave in schedule:
         main_outputs = []
         for task in wave:
-            # Rebuild the wave's score blocks first so backward still reads like
-            # a scheduler-driven algorithm instead of a generic tiled loop nest.
+            # Backward follows the same Q-major wave ordering so the educational
+            # implementation stays aligned with the forward scheduling story.
             scores, valid_mask = block_scores_and_mask(
                 q=q,
                 k=k,
