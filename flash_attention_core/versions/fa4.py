@@ -23,6 +23,7 @@ differentiate FA4 from the earlier versions.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import torch
 
@@ -47,6 +48,12 @@ class ScheduledTile:
     key_tile: int
     q_slice: slice
     k_slice: slice
+
+
+def _fa4_rescale_threshold(dtype: torch.dtype) -> float:
+    # Official FA4 sets `rescale_threshold=8.0` for 16-bit query types and 0.0
+    # otherwise. We mirror that policy here.
+    return 8.0 if dtype in (torch.float16, torch.bfloat16) else 0.0
 
 
 def _build_schedule(q_slices: list[slice], k_slices: list[slice]) -> list[list[ScheduledTile]]:
@@ -78,8 +85,15 @@ def _correction_merge(
     block_max: torch.Tensor,
     block_sum: torch.Tensor,
     weighted_values: torch.Tensor,
+    scale_log2: float,
+    rescale_threshold: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    safe_row_max_block = torch.where(torch.isfinite(row_max_block), row_max_block, block_max)
+    acc_scale_log2 = (safe_row_max_block - block_max) * scale_log2
     requires_rescale = block_max > row_max_block
+    if rescale_threshold > 0.0:
+        requires_rescale = requires_rescale & (acc_scale_log2 < -rescale_threshold)
+
     # This helper represents the "correction" role in FA4. In the real kernels,
     # that role is separated so output rescaling and correction do not block the
     # main compute path. Here we keep the separation conceptually, but execute it
@@ -93,13 +107,10 @@ def _correction_merge(
         weighted_values,
     )
 
-    # When the new tile max stays below the running max, FA4 can conceptually
-    # skip a full rescale of the accumulated state and only add the new tile with
-    # a relative scale factor. We make that branch explicit here. The standard
-    # merge above is still computed so both branches remain mathematically exact,
-    # and we use a finite fallback for rows whose running max starts at -inf.
+    # Official FA4 uses a thresholded selective-rescaling rule. Small enough max
+    # changes keep the old row max and use unit rescaling instead of fully
+    # rescaling the accumulated state. We reproduce that structure here.
     same_scale = ~requires_rescale
-    safe_row_max_block = torch.where(torch.isfinite(row_max_block), row_max_block, block_max)
     relative_scale = torch.exp(block_max - safe_row_max_block)
     same_scale_out_acc = out_acc_block + relative_scale.to(weighted_values.dtype) * weighted_values
     same_scale_normalizer = normalizer_block + relative_scale * block_sum
@@ -131,6 +142,8 @@ def forward(
 
     q_slices = iter_block_slices(q.shape[2], config.block_size_q)
     k_slices = iter_block_slices(k.shape[2], config.block_size_kv)
+    scale_log2 = 1.0 / math.log(2.0)
+    rescale_threshold = _fa4_rescale_threshold(q.dtype)
     # Each scheduled wave now owns one query tile and iterates across the K/V
     # tiles for that query tile. That matches the FA4 forward mental model from
     # the paper/blog more closely: load a Q tile, then loop over K/V blocks.
@@ -200,6 +213,8 @@ def forward(
                     block_max=block_max,
                     block_sum=block_sum,
                     weighted_values=weighted_values,
+                    scale_log2=scale_log2,
+                    rescale_threshold=rescale_threshold,
                 )
             )
             scheduler_trace.append(
@@ -208,6 +223,7 @@ def forward(
                     "query_tile": task.query_tile,
                     "key_tile": task.key_tile,
                     "rescaled": bool(rescaled.any().item()),
+                    "rescale_threshold": rescale_threshold,
                 }
             )
 

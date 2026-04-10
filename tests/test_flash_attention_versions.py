@@ -3,6 +3,7 @@ import unittest
 import torch
 
 from flash_attention_core import FlashAttentionConfig, get_version_module, reference_attention
+from flash_attention_core.versions.fa4 import _correction_merge, _fa4_rescale_threshold
 
 
 class FlashAttentionVersionTests(unittest.TestCase):
@@ -113,6 +114,47 @@ class FlashAttentionVersionTests(unittest.TestCase):
                         torch.allclose(computed, expected, atol=1e-5, rtol=1e-4),
                         msg=f"{version_name} {grad_name} mismatch for causal={causal}",
                     )
+
+    def test_fa4_thresholded_selective_rescaling_rule(self) -> None:
+        self.assertEqual(_fa4_rescale_threshold(torch.float16), 8.0)
+        self.assertEqual(_fa4_rescale_threshold(torch.bfloat16), 8.0)
+        self.assertEqual(_fa4_rescale_threshold(torch.float32), 0.0)
+
+        out_acc = torch.tensor([[[[2.0, 4.0]]]], dtype=torch.float32)
+        normalizer = torch.tensor([[[[3.0]]]], dtype=torch.float32)
+        row_max = torch.tensor([[[[10.0]]]], dtype=torch.float32)
+        block_sum = torch.tensor([[[[5.0]]]], dtype=torch.float32)
+        weighted_values = torch.tensor([[[[7.0, 11.0]]]], dtype=torch.float32)
+
+        # Small enough max increase: official FA4 keeps the old row max and skips
+        # the full rescale when the exponent-domain delta stays above -threshold.
+        merged = _correction_merge(
+            out_acc_block=out_acc,
+            normalizer_block=normalizer,
+            row_max_block=row_max,
+            block_max=torch.tensor([[[[11.0]]]], dtype=torch.float32),
+            block_sum=block_sum,
+            weighted_values=weighted_values,
+            scale_log2=1.0 / torch.log(torch.tensor(2.0)).item(),
+            rescale_threshold=8.0,
+        )
+        self.assertFalse(bool(merged[3].any().item()))
+        self.assertTrue(torch.allclose(merged[2], row_max))
+
+        # Large enough max increase: the threshold is exceeded and the merge
+        # falls back to the fully rescaled path.
+        merged = _correction_merge(
+            out_acc_block=out_acc,
+            normalizer_block=normalizer,
+            row_max_block=row_max,
+            block_max=torch.tensor([[[[20.0]]]], dtype=torch.float32),
+            block_sum=block_sum,
+            weighted_values=weighted_values,
+            scale_log2=1.0 / torch.log(torch.tensor(2.0)).item(),
+            rescale_threshold=8.0,
+        )
+        self.assertTrue(bool(merged[3].any().item()))
+        self.assertTrue(torch.all(merged[2] >= row_max))
 
 
 if __name__ == "__main__":
