@@ -1,53 +1,56 @@
 # FlashAttention in PyTorch
 
-A simplified implementation of [FlashAttention](https://arxiv.org/abs/2205.14135) in PyTorch. I have implemented the forward pass and backward pass algorithms from the paper, and also shown that it is equivalent to the normal attention formulation in Transformers. I also include some code for benchmarking. 
-
-Note that this is for educational purposes only as I haven't implemented any of the CUDA and SRAM memory tricks as described in the paper.
+This repository now contains simplified educational implementations of FlashAttention versions 1 through 4. The goal is correctness and clarity, not CUDA-level performance. Each version keeps the same exact attention math while changing the orchestration so the algorithmic differences are visible in plain PyTorch.
 
 ## Requirements
-* einops==0.6.1
 * torch==2.0.1
 
-## Files
-* [flash_attention.py](flash_attention.py) - Implementation of the general formulation of FlashAttention which takes in Q, K, V and a mask. The code includes both the forward and backward algorithms and a simple test of equivalence of the forward pass with normal attention as well.
-* [flash_attention_causal.py](flash_attention_causal.py) - The causal version of FlashAttention which takes in Q, K and V. The mask is caluclated in a causal fashion which is typcially used in autoregressive models. This code also includes the forward and backward algorithms and a simple test of equivalence of the forward pass with normal attention (causal) as well.
-* [bench.py](bench.py), [bench_causal.py](bench_causal.py) - Benchmarking code for both general and causal versions of FlashAttention.
-* [check_backward.py](check_backward.py), [check_backward_causal.py](check_backward_causal.py) - This script verifies two things - 1. whether the calculated value of gradients (using PyTorch's `jacrev`) of Q, K and V match for the normal version of attention and FlashAttention, and 2. whether these results match the implementation of backward pass given in the paper. The loss function is simply assumed to be a sum of the final output tensor. 
+## Layout
+* [flash_attention_core](flash_attention_core) - Shared package with reference attention, masking helpers, config/types, and versioned implementations.
+* [flash_attention.py](flash_attention.py) - Unified forward demo for `fa1` through `fa4`.
+* [bench.py](bench.py) - Unified benchmark entry point with `--version` and `--causal`.
+* [check_backward.py](check_backward.py) - Unified forward and backward correctness check.
+* [tests](tests) - Small regression suite covering all versions.
 
-## To run
+## Supported Modes
+* Non-causal attention with an optional key-padding mask of shape `(batch, kv_len)`.
+* Causal attention via `--causal`.
 
-### Forward pass
+## Versions
+* `fa1` - Baseline tiled online-softmax FlashAttention.
+* `fa2` - Sequence-parallel / split-Q ownership with deferred normalization and LSE-centered state.
+* `fa3` - Explicit staged pipeline with ping-pong tile buffers.
+* `fa4` - Explicit scheduler, main/softmax/correction phases, and conditional rescaling.
 
-**Causal mask**     
-```python flash_attention_causal.py```
+Where the simplified code leaves out real CUDA behavior such as TMA, WGMMA, TMEM, FP8 paths, or multi-CTA coordination, the version modules call that out in comments.
 
-**Random mask**    
-```python flash_attention.py```
+## Usage
 
-### Benchmarking - Causal mask
+### Forward Demo
 
-**FlashAttention**    
-```python bench_causal.py --b 1 --h 2 --q_len 16384 --kv_len 16384 --d 512 --type flash```
+```bash
+python flash_attention.py
+python flash_attention.py --version fa3 --causal --dump-state
+```
 
-**Normal attention**    
-```python bench_causal.py --b 1 --h 2 --q_len 16384 --kv_len 16384 --d 512 --type normal```
+### Benchmark
 
-Add `--profile` to log additional details using PyTorch Profiler.
+```bash
+python bench.py --type flash --version fa2 --b 1 --h 2 --q_len 4096 --kv_len 4096 --d 128
+python bench.py --type normal --causal --b 1 --h 2 --q_len 4096 --kv_len 4096 --d 128
+```
 
-### Benchmarking - Random mask
+Add `--profile` to capture a PyTorch profiler trace.
 
-**FlashAttention**    
-```python bench.py --b 1 --h 2 --q_len 16384 --kv_len 16384 --d 512 --type flash```
+### Forward and Backward Correctness
 
-**Normal attention**    
-```python bench.py --b 1 --h 2 --q_len 16384 --kv_len 16384 --d 512 --type normal```
+```bash
+python check_backward.py
+python check_backward.py --version fa4 --causal --q_len 256 --kv_len 256 --d 64
+```
 
-Add `--profile` to log additional details using PyTorch Profiler.
+### Tests
 
-### Backward Pass
-
-**Causal mask**     
-```python check_backward_causal.py```
-
-**Random mask**    
-```python check_backward.py```
+```bash
+python -m unittest discover -s tests
+```
