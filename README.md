@@ -41,6 +41,10 @@ python bench.py --type flash --version fa2 --b 1 --h 2 --q_len 4096 --kv_len 409
 python bench.py --type normal --causal --b 1 --h 2 --q_len 4096 --kv_len 4096 --d 128
 ```
 
+These implementations are intentionally simplified and educational rather than
+performance-tuned kernels, so benchmark numbers should be taken with a grain of
+salt.
+
 `bench.py` uses Triton's benchmark helper when running on CUDA and reports both
 `forward_ms` and `backward_ms`. For `--type flash`, the backward timing measures
 the simplified manual backward implementation. For `--type normal`, the
