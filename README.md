@@ -1,9 +1,10 @@
 # FlashAttention in PyTorch
 
-This repository now contains simplified educational implementations of FlashAttention versions 1 through 4. The goal is correctness and clarity, not CUDA-level performance. Each version keeps the same exact attention math while changing the orchestration so the algorithmic differences are visible in plain PyTorch.
+This repository contains simplified educational implementations of FlashAttention versions 1 through 4. The goal is correctness and clarity, not CUDA-level performance. Each version keeps the same exact attention math while changing the orchestration so the algorithmic differences are visible in plain PyTorch.
 
 ## Requirements
-* torch==2.0.1
+* torch>=2.8.0
+* triton>=3.4.0
 
 ## Layout
 * [flash_attention_core](flash_attention_core) - Shared package with reference attention, masking helpers, config/types, and versioned implementations.
@@ -26,7 +27,7 @@ Where the simplified code leaves out real CUDA behavior such as TMA, WGMMA, TMEM
 
 ## Usage
 
-### Forward Demo
+### Forward Pass
 
 ```bash
 python flash_attention.py
@@ -62,6 +63,6 @@ python -m unittest discover -s tests
 python -m unittest tests.test_flash_attention_long
 ```
 
-`python -m unittest discover -s tests` tells Python's built-in `unittest` runner to scan the [tests](tests) directory, find test files automatically, and run everything it discovers there. That is the command to use for the regular test suite.
+<!-- `python -m unittest discover -s tests` tells Python's built-in `unittest` runner to scan the [tests](tests) directory, find test files automatically, and run everything it discovers there. That is the command to use for the regular test suite.
 
-`python -m unittest tests.test_flash_attention_long` runs one specific test module directly. The long-sequence test is called out separately because it is heavier than the rest of the suite and is mainly useful when you explicitly want the `kv_len=8192` coverage on GPU.
+`python -m unittest tests.test_flash_attention_long` runs one specific test module directly. The long-sequence test is called out separately because it is heavier than the rest of the suite and is mainly useful when you explicitly want the `kv_len=8192` coverage on GPU. -->
