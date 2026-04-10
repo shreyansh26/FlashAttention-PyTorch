@@ -92,6 +92,22 @@ def _correction_merge(
         block_sum,
         weighted_values,
     )
+
+    # When the new tile max stays below the running max, FA4 can conceptually
+    # skip a full rescale of the accumulated state and only add the new tile with
+    # a relative scale factor. We make that branch explicit here. The standard
+    # merge above is still computed so both branches remain mathematically exact,
+    # and we use a finite fallback for rows whose running max starts at -inf.
+    same_scale = ~requires_rescale
+    safe_row_max_block = torch.where(torch.isfinite(row_max_block), row_max_block, block_max)
+    relative_scale = torch.exp(block_max - safe_row_max_block)
+    same_scale_out_acc = out_acc_block + relative_scale.to(weighted_values.dtype) * weighted_values
+    same_scale_normalizer = normalizer_block + relative_scale * block_sum
+    same_scale_row_max = row_max_block
+
+    merged_out_acc = torch.where(same_scale, same_scale_out_acc, merged_out_acc)
+    merged_normalizer = torch.where(same_scale, same_scale_normalizer, merged_normalizer)
+    merged_row_max = torch.where(same_scale, same_scale_row_max, merged_row_max)
     return merged_out_acc, merged_normalizer, merged_row_max, requires_rescale
 
 
