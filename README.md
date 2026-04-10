@@ -40,7 +40,13 @@ python bench.py --type flash --version fa2 --b 1 --h 2 --q_len 4096 --kv_len 409
 python bench.py --type normal --causal --b 1 --h 2 --q_len 4096 --kv_len 4096 --d 128
 ```
 
-Add `--profile` to capture a PyTorch profiler trace.
+`bench.py` uses Triton's benchmark helper when running on CUDA and reports both
+`forward_ms` and `backward_ms`. For `--type flash`, the backward timing measures
+the simplified manual backward implementation. For `--type normal`, the
+backward timing measures PyTorch autograd on the reference attention path.
+
+Add `--profile` to capture separate PyTorch profiler traces for the forward and
+backward benchmark paths.
 
 ### Forward and Backward Correctness
 
