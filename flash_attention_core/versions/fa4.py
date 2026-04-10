@@ -52,6 +52,9 @@ class ScheduledTile:
 def _build_schedule(q_slices: list[slice], k_slices: list[slice]) -> list[list[ScheduledTile]]:
     waves = []
     for wave_id, k_slice in enumerate(k_slices):
+        # The schedule is intentionally explicit so readers can see that FA4 is
+        # driven by scheduler metadata, not just by plain nested loops. Real FA4
+        # uses a richer scheduler to map tiles to warpgroups / CTA roles.
         waves.append(
             [
                 ScheduledTile(
@@ -77,6 +80,10 @@ def _correction_merge(
     weighted_values: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     requires_rescale = block_max > row_max_block
+    # This helper represents the "correction" role in FA4. In the real kernels,
+    # that role is separated so output rescaling and correction do not block the
+    # main compute path. Here we keep the separation conceptually, but execute it
+    # inline in a plain tensor function.
     merged_out_acc, merged_normalizer, merged_row_max = merge_state_unnormalized(
         out_acc_block,
         normalizer_block,
@@ -108,6 +115,14 @@ def forward(
 
     q_slices = iter_block_slices(q.shape[2], config.block_size_q)
     k_slices = iter_block_slices(k.shape[2], config.block_size_kv)
+    # Each wave is processed in three conceptual roles:
+    # 1. main score production
+    # 2. softmax-statistics update
+    # 3. correction / rescaling merge
+    #
+    # Real FA4 couples these roles to Blackwell-era hardware features such as
+    # TMEM, async MMA, and multi-role warpgroups. We keep the role split and the
+    # scheduling metadata, but intentionally do not simulate those primitives.
     out_acc_blocks = [torch.zeros_like(q[:, :, q_slice, :]) for q_slice in q_slices]
     normalizer_blocks = [
         torch.zeros(
@@ -127,6 +142,8 @@ def forward(
     for wave in schedule:
         main_outputs = []
         for task in wave:
+            # Main role: produce score tiles for every scheduled query tile in
+            # the current wave.
             main_outputs.append(
                 (
                     task,
@@ -143,6 +160,8 @@ def forward(
 
         softmax_outputs = []
         for task, scores, valid_mask in main_outputs:
+            # Softmax role: update the per-row statistics and build the local
+            # weighted-value contribution from the score tile.
             block_max, block_sum, weighted_values = compute_local_statistics(
                 scores,
                 valid_mask,
@@ -151,6 +170,8 @@ def forward(
             softmax_outputs.append((task, block_max, block_sum, weighted_values))
 
         for task, block_max, block_sum, weighted_values in softmax_outputs:
+            # Correction role: merge the new tile's contribution into the running
+            # output state and record whether a rescale was conceptually needed.
             out_acc_blocks[task.query_tile], normalizer_blocks[task.query_tile], row_max_blocks[task.query_tile], rescaled = (
                 _correction_merge(
                     out_acc_block=out_acc_blocks[task.query_tile],
@@ -214,6 +235,8 @@ def backward(
     for wave in schedule:
         main_outputs = []
         for task in wave:
+            # Rebuild the wave's score blocks first so backward still reads like
+            # a scheduler-driven algorithm instead of a generic tiled loop nest.
             scores, valid_mask = block_scores_and_mask(
                 q=q,
                 k=k,
@@ -226,6 +249,8 @@ def backward(
 
         softmax_outputs = []
         for task, scores, valid_mask in main_outputs:
+            # The derivative formulas remain exact attention derivatives. The FA4
+            # distinction here is the role/schedule decomposition, not new math.
             local_dQ, local_dK, local_dV = backward_step(
                 q_block=q[:, :, task.q_slice, :],
                 k_block=k[:, :, task.k_slice, :],

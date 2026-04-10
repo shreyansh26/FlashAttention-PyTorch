@@ -53,6 +53,9 @@ def forward(
 
     q_slices = iter_block_slices(q.shape[2], config.block_size_q)
     k_slices = iter_block_slices(k.shape[2], config.block_size_kv)
+    # Each query tile owns a running output tile plus the online-softmax state
+    # for that tile. This is the key FA1 idea: keep row-local statistics instead
+    # of materializing the full attention matrix.
     out_blocks = [torch.zeros_like(q[:, :, q_slice, :]) for q_slice in q_slices]
     normalizer_blocks = [
         torch.zeros(
@@ -73,6 +76,9 @@ def forward(
         v_block = v[:, :, k_slice, :]
 
         for q_index, q_slice in enumerate(q_slices):
+            # In the CUDA kernel this block would be computed from SRAM-resident
+            # tiles after cooperative loads. Here we just rebuild the score tile
+            # directly in PyTorch to keep the math readable.
             scores, valid_mask = block_scores_and_mask(
                 q=q,
                 k=k,
@@ -81,7 +87,11 @@ def forward(
                 causal=causal,
                 key_padding_mask=key_padding_mask,
             )
+            # `compute_local_statistics` performs the local online-softmax work:
+            # local row max, local row sum, and the unnormalized P @ V term.
             block_max, block_sum, weighted_values = compute_local_statistics(scores, valid_mask, v_block)
+            # `merge_state_normalized` is the exact FA1 merge step that combines
+            # the old online-softmax state with the new tile contribution.
             out_blocks[q_index], normalizer_blocks[q_index], row_max_blocks[q_index] = merge_state_normalized(
                 out_blocks[q_index],
                 normalizer_blocks[q_index],
@@ -133,6 +143,9 @@ def backward(
     for k_slice in k_slices:
         k_block = k[:, :, k_slice, :]
         v_block = v[:, :, k_slice, :]
+        # FA1 accumulates dK and dV per K/V tile while revisiting every query tile.
+        # The real backward kernel similarly recomputes local probabilities instead
+        # of reading a stored attention matrix back from global memory.
         dK_block = torch.zeros_like(k_block)
         dV_block = torch.zeros_like(v_block)
 
@@ -146,6 +159,8 @@ def backward(
                 causal=causal,
                 key_padding_mask=key_padding_mask,
             )
+            # The saved LSE lets us reconstruct probabilities on demand. That is
+            # the backward-side analogue of FA1's forward IO reduction.
             local_dQ, local_dK, local_dV = backward_step(
                 q_block=q_block,
                 k_block=k_block,

@@ -55,6 +55,9 @@ def _load_tile(
     k: torch.Tensor,
     v: torch.Tensor,
 ) -> TileBuffer:
+    # In real FA3 this "load" would be backed by TMA into shared memory and then
+    # consumed by WGMMA-based compute warpgroups. Here it is just a lightweight
+    # Python object so the pipeline structure is explicit in the code.
     return TileBuffer(
         buffer_id=buffer_id,
         tile_id=tile_id,
@@ -84,6 +87,9 @@ def forward(
 
     q_slices = iter_block_slices(q.shape[2], config.block_size_q)
     k_slices = iter_block_slices(k.shape[2], config.block_size_kv)
+    # The buffers stand in for ping-pong shared-memory stages. FA3's practical
+    # gain comes from overlapping movement and compute; we preserve that mental
+    # model without introducing actual asynchronous execution here.
     out_acc_blocks = [torch.zeros_like(q[:, :, q_slice, :]) for q_slice in q_slices]
     normalizer_blocks = [
         torch.zeros(
@@ -114,6 +120,7 @@ def forward(
         for kv_tile_id, _ in enumerate(k_slices):
             next_buffer = None
             if kv_tile_id + 1 < len(k_slices):
+                # Prefetch the next logical stage into the alternate buffer.
                 next_buffer = _load_tile(
                     buffer_id=(active_buffer.buffer_id + 1) % max(config.num_stages, 2),
                     tile_id=kv_tile_id + 1,
@@ -124,6 +131,7 @@ def forward(
 
             # Real FA3 overlaps producer and consumer warpgroups here. We keep the
             # stages explicit, but execute them sequentially for clarity.
+            # Stage 1: consume the active K/V tile to build the score block.
             scores, valid_mask = block_scores_and_mask(
                 q=q,
                 k=k,
@@ -132,11 +140,14 @@ def forward(
                 causal=causal,
                 key_padding_mask=key_padding_mask,
             )
+            # Stage 2: update local softmax statistics and form the unnormalized
+            # tile contribution for P @ V.
             block_max, block_sum, weighted_values = compute_local_statistics(
                 scores,
                 valid_mask,
                 active_buffer.v_block,
             )
+            # Stage 3: merge the contribution into the running query-tile state.
             out_acc_blocks[q_tile_id], normalizer_blocks[q_tile_id], row_max_blocks[q_tile_id] = merge_state_unnormalized(
                 out_acc_blocks[q_tile_id],
                 normalizer_blocks[q_tile_id],
@@ -202,6 +213,9 @@ def backward(
             continue
 
         q_block = q[:, :, q_slice, :]
+        # Backward keeps the same staged interpretation: consume one active tile,
+        # optionally prepare the next tile, then fold the local derivatives into
+        # the running dQ / dK / dV accumulators.
         dQ_block = torch.zeros_like(q_block)
         active_buffer = _load_tile(
             buffer_id=0,
@@ -222,6 +236,9 @@ def backward(
                     v=v,
                 )
 
+            # In the actual Hopper kernels, the backward mainloop is heavily
+            # constrained by register pressure and overlap scheduling. We keep the
+            # simplified stage order visible rather than reproducing those details.
             scores, valid_mask = block_scores_and_mask(
                 q=q,
                 k=k,

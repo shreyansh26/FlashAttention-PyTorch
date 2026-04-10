@@ -55,6 +55,9 @@ def forward(
 
     q_slices = iter_block_slices(q.shape[2], config.block_size_q)
     k_slices = iter_block_slices(k.shape[2], config.block_size_kv)
+    # FA2 changes the ownership model: the outer loop now "owns" one query tile
+    # and streams every K/V tile through it. This mirrors split-Q style work
+    # partitioning, which improves occupancy when sequence length is large.
     out_acc_blocks = [torch.zeros_like(q[:, :, q_slice, :]) for q_slice in q_slices]
     normalizer_blocks = [
         torch.zeros(
@@ -81,6 +84,9 @@ def forward(
         )
 
         for k_slice in k_slices:
+            # Real FA2 would launch multiple CTAs over query tiles so these owners
+            # run concurrently. Here we keep the same control-flow structure but
+            # execute it sequentially for clarity.
             scores, valid_mask = block_scores_and_mask(
                 q=q,
                 k=k,
@@ -94,6 +100,9 @@ def forward(
                 valid_mask,
                 v[:, :, k_slice, :],
             )
+            # Unlike FA1, we intentionally keep the output tile unnormalized while
+            # streaming K/V tiles. The final normalization is deferred until the
+            # owner has seen the full K/V sequence.
             out_acc_blocks[owner_id], normalizer_blocks[owner_id], row_max_blocks[owner_id] = merge_state_unnormalized(
                 out_acc_blocks[owner_id],
                 normalizer_blocks[owner_id],
@@ -106,6 +115,8 @@ def forward(
     out_acc = torch.cat(out_acc_blocks, dim=2)
     normalizers = torch.cat(normalizer_blocks, dim=2)
     row_max = torch.cat(row_max_blocks, dim=2)
+    # This late normalization is one of the main algorithmic cleanups in FA2:
+    # fewer rescale operations are performed inside the tiled main loop.
     out = finalize_unnormalized(out_acc, normalizers)
     debug_state = {
         "query_owners": query_owners,
@@ -152,6 +163,8 @@ def backward(
 
     for owner_id, q_slice in enumerate(q_slices):
         q_block = q[:, :, q_slice, :]
+        # Keep gradients local to the owning query tile first, then write the
+        # finished dQ tile back once all K/V tiles have been processed.
         dQ_block = torch.zeros_like(q_block)
 
         for k_slice in k_slices:
@@ -165,6 +178,8 @@ def backward(
                 causal=causal,
                 key_padding_mask=key_padding_mask,
             )
+            # The derivative formulas are the same exact attention derivatives as
+            # FA1. The educational difference is purely in the orchestration.
             local_dQ, local_dK, local_dV = backward_step(
                 q_block=q_block,
                 k_block=k_block,
