@@ -5,8 +5,8 @@ import torch
 from flash_attention_core import FlashAttentionConfig, get_version_module, reference_attention
 
 
-@unittest.skipUnless(torch.cuda.is_available(), "CUDA long smoke tests require a GPU")
-class FlashAttentionLongSmokeCudaTests(unittest.TestCase):
+@unittest.skipUnless(torch.cuda.is_available(), "CUDA long tests require a GPU")
+class FlashAttentionLongTests(unittest.TestCase):
     def setUp(self) -> None:
         self.device = torch.device("cuda")
         self.config = FlashAttentionConfig(block_size_q=128, block_size_kv=128, num_stages=2)
@@ -32,7 +32,7 @@ class FlashAttentionLongSmokeCudaTests(unittest.TestCase):
             v.detach().clone().requires_grad_(True),
         )
 
-    def test_long_kv_forward_and_backward_smoke(self) -> None:
+    def test_long_kv_forward_and_backward(self) -> None:
         for version_name in self.versions:
             version = get_version_module(version_name)
             for causal in (False, True):
@@ -73,7 +73,7 @@ class FlashAttentionLongSmokeCudaTests(unittest.TestCase):
                 auto_grads = torch.autograd.grad(auto_out.sum(), (q_auto, k_auto, v_auto))
                 for grad, grad_name in zip(auto_grads, ("dQ", "dK", "dV")):
                     self.assertEqual(grad.shape, (q_auto.shape if grad_name == "dQ" else k_auto.shape if grad_name == "dK" else v_auto.shape))
-                    self.assertTrue(torch.isfinite(grad).all(), msg=f"{version_name} {grad_name} autograd smoke produced non-finite values")
+                    self.assertTrue(torch.isfinite(grad).all(), msg=f"{version_name} {grad_name} autograd long-test run produced non-finite values")
 
                 manual = version.backward(
                     q.detach(),
