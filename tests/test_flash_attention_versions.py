@@ -7,17 +7,20 @@ from flash_attention_core import FlashAttentionConfig, get_version_module, refer
 
 class FlashAttentionVersionTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.config = FlashAttentionConfig(block_size_q=4, block_size_kv=4, num_stages=2)
+        self.config = FlashAttentionConfig(block_size_q=16, block_size_kv=16, num_stages=2)
         self.versions = ("fa1", "fa2", "fa3", "fa4")
 
     def _inputs(self, *, causal: bool):
         torch.manual_seed(0)
-        q = torch.randn(1, 2, 8, 4, dtype=torch.float32, requires_grad=True)
-        k = torch.randn(1, 2, 8, 4, dtype=torch.float32, requires_grad=True)
-        v = torch.randn(1, 2, 8, 4, dtype=torch.float32, requires_grad=True)
+        q = torch.randn(1, 8, 24, 64, dtype=torch.float32, requires_grad=True)
+        k = torch.randn(1, 8, 24, 64, dtype=torch.float32, requires_grad=True)
+        v = torch.randn(1, 8, 24, 64, dtype=torch.float32, requires_grad=True)
         key_padding_mask = None
         if not causal:
-            key_padding_mask = torch.tensor([[1, 1, 1, 1, 0, 1, 1, 0]], dtype=torch.bool)
+            key_padding_mask = torch.tensor(
+                [[1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1]],
+                dtype=torch.bool,
+            )
         return q, k, v, key_padding_mask
 
     def _clone_triplet(self, q, k, v):
