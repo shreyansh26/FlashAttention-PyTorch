@@ -157,6 +157,21 @@ class FlashAttentionVersionTests(unittest.TestCase):
         self.assertTrue(bool(merged[3].any().item()))
         self.assertTrue(torch.all(merged[2] >= row_max))
 
+        # Uninitialized rows must still force the first rescale/update so the
+        # running row max leaves -inf even when thresholding is enabled.
+        merged = _correction_merge(
+            out_acc_block=torch.zeros_like(out_acc),
+            normalizer_block=torch.zeros_like(normalizer),
+            row_max_block=torch.full_like(row_max, float("-inf")),
+            block_max=torch.tensor([[[[5.0]]]], dtype=torch.float32),
+            block_sum=block_sum,
+            weighted_values=weighted_values,
+            scale_log2=1.0 / torch.log(torch.tensor(2.0)).item(),
+            rescale_threshold=8.0,
+        )
+        self.assertTrue(bool(merged[3].any().item()))
+        self.assertTrue(torch.isfinite(merged[2]).all())
+
     def test_fa3_fp8_forward_tracks_quantization_metadata(self) -> None:
         version = get_version_module("fa3")
         q, k, v, key_padding_mask = self._inputs(causal=False)

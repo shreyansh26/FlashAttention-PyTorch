@@ -88,11 +88,14 @@ def _correction_merge(
     scale_log2: float,
     rescale_threshold: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    safe_row_max_block = torch.where(torch.isfinite(row_max_block), row_max_block, block_max)
+    has_prior_state = torch.isfinite(row_max_block)
+    safe_row_max_block = torch.where(has_prior_state, row_max_block, block_max)
     acc_scale_log2 = (safe_row_max_block - block_max) * scale_log2
-    requires_rescale = block_max > row_max_block
+    requires_rescale = ~has_prior_state
+    requires_rescale = requires_rescale | (block_max > row_max_block)
     if rescale_threshold > 0.0:
-        requires_rescale = requires_rescale & (acc_scale_log2 < -rescale_threshold)
+        selective_skip = has_prior_state & (block_max > row_max_block) & (acc_scale_log2 >= -rescale_threshold)
+        requires_rescale = requires_rescale & ~selective_skip
 
     # This helper represents the "correction" role in FA4. In the real kernels,
     # that role is separated so output rescaling and correction do not block the
