@@ -1,53 +1,84 @@
 # FlashAttention in PyTorch
 
-A simplified implementation of [FlashAttention](https://arxiv.org/abs/2205.14135) in PyTorch. I have implemented the forward pass and backward pass algorithms from the paper, and also shown that it is equivalent to the normal attention formulation in Transformers. I also include some code for benchmarking. 
-
-Note that this is for educational purposes only as I haven't implemented any of the CUDA and SRAM memory tricks as described in the paper.
+This repository contains simplified educational implementations of FlashAttention versions 1 through 4. The goal is correctness and clarity, not CUDA-level performance. Each version keeps the same exact attention math while changing the orchestration so the algorithmic differences are visible in plain PyTorch.
 
 ## Requirements
-* einops==0.6.1
-* torch==2.0.1
+* torch>=2.8.0
+* triton>=3.4.0
 
-## Files
-* [flash_attention.py](flash_attention.py) - Implementation of the general formulation of FlashAttention which takes in Q, K, V and a mask. The code includes both the forward and backward algorithms and a simple test of equivalence of the forward pass with normal attention as well.
-* [flash_attention_causal.py](flash_attention_causal.py) - The causal version of FlashAttention which takes in Q, K and V. The mask is caluclated in a causal fashion which is typcially used in autoregressive models. This code also includes the forward and backward algorithms and a simple test of equivalence of the forward pass with normal attention (causal) as well.
-* [bench.py](bench.py), [bench_causal.py](bench_causal.py) - Benchmarking code for both general and causal versions of FlashAttention.
-* [check_backward.py](check_backward.py), [check_backward_causal.py](check_backward_causal.py) - This script verifies two things - 1. whether the calculated value of gradients (using PyTorch's `jacrev`) of Q, K and V match for the normal version of attention and FlashAttention, and 2. whether these results match the implementation of backward pass given in the paper. The loss function is simply assumed to be a sum of the final output tensor. 
+## Layout
+* [flash_attention_core](flash_attention_core) - Shared package with reference attention, masking helpers, config/types, and versioned implementations.
+* [flash_attention.py](flash_attention.py) - Unified forward demo for `fa1` through `fa4`.
+* [bench.py](bench.py) - Unified benchmark entry point with `--version` and `--causal`.
+* [check_backward.py](check_backward.py) - Unified forward and backward correctness check.
+* [tests](tests) - Small regression suite covering all versions.
 
-## To run
+## Supported Modes
+* Non-causal attention with an optional key-padding mask of shape `(batch, kv_len)`.
+* Causal attention via `--causal`.
 
-### Forward pass
+## Versions
+* `fa1` - Baseline tiled online-softmax FlashAttention.
+* `fa2` - Sequence-parallel / split-Q ownership with deferred normalization and LSE-centered state.
+* `fa3` - Explicit staged pipeline with ping-pong tile buffers.
+* `fa4` - Explicit scheduler, main/softmax/correction phases, and conditional rescaling.
 
-**Causal mask**     
-```python flash_attention_causal.py```
+Where the simplified code leaves out real CUDA behavior such as TMA, WGMMA, TMEM, FP8 paths, or multi-CTA coordination, the version modules call that out in comments.
 
-**Random mask**    
-```python flash_attention.py```
+## Usage
 
-### Benchmarking - Causal mask
+### Forward Pass
 
-**FlashAttention**    
-```python bench_causal.py --b 1 --h 2 --q_len 16384 --kv_len 16384 --d 512 --type flash```
+```bash
+python flash_attention.py
+python flash_attention.py --version fa3 --causal --dump-state
+python flash_attention.py --version fa3 --fp8 --dump-state
+```
 
-**Normal attention**    
-```python bench_causal.py --b 1 --h 2 --q_len 16384 --kv_len 16384 --d 512 --type normal```
+`--fp8` is only implemented for `fa3`. It models the official FA3 FP8 forward
+path with simplified per-tile block quantization metadata in regular PyTorch.
+FP8 backward is intentionally unsupported, matching the released FA3 support
+boundary.
 
-Add `--profile` to log additional details using PyTorch Profiler.
+### Benchmark
 
-### Benchmarking - Random mask
+```bash
+python bench.py --type flash --version fa2 --b 1 --h 2 --q_len 4096 --kv_len 4096 --d 128
+python bench.py --type normal --causal --b 1 --h 2 --q_len 4096 --kv_len 4096 --d 128
+python bench.py --type flash --version fa3 --fp8 --b 1 --h 2 --q_len 4096 --kv_len 4096 --d 128
+```
 
-**FlashAttention**    
-```python bench.py --b 1 --h 2 --q_len 16384 --kv_len 16384 --d 512 --type flash```
+These implementations are intentionally simplified and educational rather than
+performance-tuned kernels, so benchmark numbers should be taken with a grain of
+salt.
 
-**Normal attention**    
-```python bench.py --b 1 --h 2 --q_len 16384 --kv_len 16384 --d 512 --type normal```
+`bench.py` uses Triton's benchmark helper when running on CUDA and reports both
+`forward_ms` and `backward_ms`. For `--type flash`, the backward timing measures
+the simplified manual backward implementation. For `--type normal`, the
+backward timing measures PyTorch autograd on the reference attention path. For
+`fa3 --fp8`, only the forward timing is reported and backward is marked as
+unsupported.
 
-Add `--profile` to log additional details using PyTorch Profiler.
+Add `--profile` to capture separate PyTorch profiler traces for the forward and
+backward benchmark paths.
 
-### Backward Pass
+### Forward and Backward Correctness
 
-**Causal mask**     
-```python check_backward_causal.py```
+```bash
+python check_backward.py
+python check_backward.py --version fa4 --causal --q_len 256 --kv_len 256 --d 64
+```
 
-**Random mask**    
-```python check_backward.py```
+`check_backward.py --version fa3 --fp8` is intentionally unsupported because
+the educational FP8 mode only models the released FA3 forward path.
+
+### Tests
+
+```bash
+python -m unittest discover -s tests
+python -m unittest tests.test_flash_attention_long
+```
+
+<!-- `python -m unittest discover -s tests` tells Python's built-in `unittest` runner to scan the [tests](tests) directory, find test files automatically, and run everything it discovers there. That is the command to use for the regular test suite.
+
+`python -m unittest tests.test_flash_attention_long` runs one specific test module directly. The long-sequence test is called out separately because it is heavier than the rest of the suite and is mainly useful when you explicitly want the `kv_len=8192` coverage on GPU. -->

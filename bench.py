@@ -1,67 +1,139 @@
-import time
-import torch
-from flash_attention import flash_attention, normal_attention
 import argparse
+import time
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--type', type=str, required=True, help="flash/normal")
-parser.add_argument('--b', type=int, required=False, default=1, help="Batch size")
-parser.add_argument('--h', type=int, required=False, default=2, help="Number of heads")
-parser.add_argument('--q_len', type=int, required=False, default=4096, help="Length/first dimension of Q matrix")
-parser.add_argument('--kv_len', type=int, required=False, default=4096, help="Length/first dimension of K/V matrix")
-parser.add_argument('--d', type=int, required=False, default=512, help="Dimension of vector")
-parser.add_argument('--profile', action='store_true', help="For Pytorch profiling")
+import torch
+import triton.testing
 
-args = parser.parse_args()
+from flash_attention_core import get_version_module, reference_attention
+from flash_attention_core.script_utils import (
+    add_common_arguments,
+    choose_device,
+    config_from_args,
+    random_inputs,
+    validate_fp8_support,
+)
 
-Q = torch.randn(args.b, args.h, args.q_len, args.d, requires_grad=True).to(device='cuda')
-K = torch.randn(args.b, args.h, args.kv_len, args.d, requires_grad=True).to(device='cuda')
-V = torch.randn(args.b, args.h, args.kv_len, args.d, requires_grad=True).to(device='cuda')
-mask = torch.randint(0, 2, (args.b, args.kv_len)).to(device='cuda')
 
-if args.type == "flash":
-    for _ in range(10):
-        flash_attention(Q, K, V, mask)
+def benchmark(fn, *, warmup: int, rep: int) -> float:
+    if torch.cuda.is_available():
+        return triton.testing.do_bench(fn, warmup=warmup, rep=rep, return_mode="mean")
 
-    start = time.time_ns()
-    flash_attention(Q, K, V, mask)
-    end = time.time_ns()
+    for _ in range(warmup):
+        fn()
 
-    t = (end - start) / 1000000
-    print(f'{t}ms')
-else:
-    for _ in range(10):
-        normal_attention(Q, K, V, mask)
-        
-    start = time.time_ns()
-    normal_attention(Q, K, V, mask)
-    end = time.time_ns()
+    start = time.perf_counter_ns()
+    for _ in range(rep):
+        fn()
+    end = time.perf_counter_ns()
+    return ((end - start) / rep) / 1_000_000
 
-    t = (end - start) / 1000000
-    print(f'{t}ms')
 
-if args.profile:
+def clone_triplet(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
+    return (
+        q.detach().clone().requires_grad_(True),
+        k.detach().clone().requires_grad_(True),
+        v.detach().clone().requires_grad_(True),
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Benchmark simplified FlashAttention implementations")
+    add_common_arguments(parser, include_type=True, include_profile=True)
+    parser.add_argument("--warmup", type=int, default=25, help="Warmup iterations for Triton benchmarking")
+    parser.add_argument("--rep", type=int, default=100, help="Measured iterations for Triton benchmarking")
+    args = parser.parse_args()
+
+    device = choose_device()
+    config = config_from_args(args)
+    validate_fp8_support(version=args.version, fp8=args.fp8, script_name="bench", benchmark_type=args.type)
+    version = get_version_module(args.version)
+    q, k, v, key_padding_mask = random_inputs(args, device=device)
+
     if args.type == "flash":
-        with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-            on_trace_ready=torch.profiler.tensorboard_trace_handler('./profiler_logs/bench_log_flash'),
-            record_shapes=True,
-            profile_memory=True,
-            with_stack=False, # incurs an additional overhead, disable if not needed
-            with_flops=True,
-            with_modules=False, # only for torchscript models atm
-        ) as prof:
-            flash_attention(Q, K, V, mask)
-        print(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
+        forward_run = lambda: version.attention(
+            q,
+            k,
+            v,
+            causal=args.causal,
+            key_padding_mask=key_padding_mask,
+            config=config,
+        )
+
+        def backward_run():
+            if args.fp8:
+                raise RuntimeError("unsupported")
+            q_b = q.detach().clone()
+            k_b = k.detach().clone()
+            v_b = v.detach().clone()
+            forward_result = version.forward(
+                q_b,
+                k_b,
+                v_b,
+                causal=args.causal,
+                key_padding_mask=key_padding_mask,
+                config=config,
+            )
+            version.backward(
+                q_b,
+                k_b,
+                v_b,
+                torch.ones_like(forward_result.out),
+                forward_result,
+                causal=args.causal,
+                key_padding_mask=key_padding_mask,
+                config=config,
+            )
     else:
-        with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-            on_trace_ready=torch.profiler.tensorboard_trace_handler('./profiler_logs/bench_log_normal'),
-            record_shapes=True,
-            profile_memory=True,
-            with_stack=False, # incurs an additional overhead, disable if not needed
-            with_flops=True,
-            with_modules=False, # only for torchscript models atm
-        ) as prof:
-            normal_attention(Q, K, V, mask)
-        print(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
+        forward_run = lambda: reference_attention(
+            q,
+            k,
+            v,
+            causal=args.causal,
+            key_padding_mask=key_padding_mask,
+        )
+
+        def backward_run():
+            q_b, k_b, v_b = clone_triplet(q, k, v)
+            out = reference_attention(
+                q_b,
+                k_b,
+                v_b,
+                causal=args.causal,
+                key_padding_mask=key_padding_mask,
+            )
+            torch.autograd.grad(out.sum(), (q_b, k_b, v_b))
+
+    forward_ms = benchmark(forward_run, warmup=args.warmup, rep=args.rep)
+    backward_ms = None if (args.type == "flash" and args.fp8) else benchmark(backward_run, warmup=args.warmup, rep=args.rep)
+    print(f"type={args.type} version={args.version} causal={args.causal} device={device}")
+    print(f"fp8={args.fp8}")
+    print(f"forward_ms={forward_ms:.3f}")
+    if backward_ms is None:
+        print("backward_ms=unsupported")
+    else:
+        print(f"backward_ms={backward_ms:.3f}")
+
+    if args.profile:
+        activities = [torch.profiler.ProfilerActivity.CPU]
+        if torch.cuda.is_available():
+            activities.append(torch.profiler.ProfilerActivity.CUDA)
+        profiled_runs = [("forward", forward_run)]
+        if backward_ms is not None:
+            profiled_runs.append(("backward", backward_run))
+        for pass_name, run in profiled_runs:
+            with torch.profiler.profile(
+                activities=activities,
+                on_trace_ready=torch.profiler.tensorboard_trace_handler(f"./profiler_logs/bench_log_{pass_name}"),
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=False,
+                with_flops=True,
+                with_modules=False,
+            ) as prof:
+                run()
+            print(f"[{pass_name}]")
+            print(prof.key_averages().table(sort_by="self_cpu_memory_usage", row_limit=10))
+
+
+if __name__ == "__main__":
+    main()
