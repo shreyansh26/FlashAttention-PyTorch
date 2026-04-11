@@ -4,6 +4,7 @@ import torch
 
 from flash_attention_core import FlashAttentionConfig, get_version_module, reference_attention
 from flash_attention_core.versions.fa4 import _correction_merge, _fa4_rescale_threshold
+from flash_attention_core.script_utils import validate_fp8_support
 
 
 class FlashAttentionVersionTests(unittest.TestCase):
@@ -155,6 +156,55 @@ class FlashAttentionVersionTests(unittest.TestCase):
         )
         self.assertTrue(bool(merged[3].any().item()))
         self.assertTrue(torch.all(merged[2] >= row_max))
+
+    def test_fa3_fp8_forward_tracks_quantization_metadata(self) -> None:
+        version = get_version_module("fa3")
+        q, k, v, key_padding_mask = self._inputs(causal=False)
+        fp8_config = FlashAttentionConfig(block_size_q=16, block_size_kv=16, num_stages=2, fp8=True)
+
+        forward_result = version.forward(
+            q.detach(),
+            k.detach(),
+            v.detach(),
+            causal=False,
+            key_padding_mask=key_padding_mask,
+            config=fp8_config,
+        )
+        reference_out = reference_attention(
+            q.detach(),
+            k.detach(),
+            v.detach(),
+            causal=False,
+            key_padding_mask=key_padding_mask,
+        )
+
+        self.assertTrue(torch.allclose(forward_result.out, reference_out, atol=2e-1, rtol=2e-1))
+        self.assertTrue(forward_result.saved_state["fp8_enabled"])
+        first_stage = forward_result.saved_state["pipeline_trace"][0]
+        self.assertTrue(first_stage["fp8"])
+        self.assertIsNotNone(first_stage["q_scale"])
+        self.assertIsNotNone(first_stage["k_scale"])
+        self.assertIsNotNone(first_stage["v_scale"])
+
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            version.backward(
+                q.detach(),
+                k.detach(),
+                v.detach(),
+                torch.ones_like(forward_result.out),
+                forward_result,
+                causal=False,
+                key_padding_mask=key_padding_mask,
+                config=fp8_config,
+            )
+
+    def test_fp8_guardrails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "only implemented for --version fa3"):
+            validate_fp8_support(version="fa4", fp8=True, script_name="flash_attention")
+        with self.assertRaisesRegex(ValueError, "backward is unsupported"):
+            validate_fp8_support(version="fa3", fp8=True, script_name="check_backward")
+        with self.assertRaisesRegex(ValueError, "only applies to the FA3 flash path"):
+            validate_fp8_support(version="fa3", fp8=True, script_name="bench", benchmark_type="normal")
 
 
 if __name__ == "__main__":

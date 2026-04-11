@@ -9,6 +9,7 @@ from flash_attention_core.script_utils import (
     choose_device,
     config_from_args,
     random_inputs,
+    validate_fp8_support,
 )
 
 
@@ -19,6 +20,7 @@ def main() -> None:
 
     device = choose_device()
     config = config_from_args(args)
+    validate_fp8_support(version=args.version, fp8=args.fp8, script_name="flash_attention")
     version = get_version_module(args.version)
     q, k, v, key_padding_mask = random_inputs(args, device=device)
 
@@ -39,8 +41,11 @@ def main() -> None:
     )
 
     max_abs_diff = (forward_result.out - reference_out).abs().max().item()
+    atol = 2e-1 if args.fp8 else 1e-5
+    rtol = 2e-1 if args.fp8 else 1e-4
     print(f"device={device} version={args.version} causal={args.causal}")
-    print(f"forward_close={torch.allclose(forward_result.out, reference_out, atol=1e-5, rtol=1e-4)}")
+    print(f"fp8={args.fp8}")
+    print(f"forward_close={torch.allclose(forward_result.out, reference_out, atol=atol, rtol=rtol)}")
     print(f"max_abs_diff={max_abs_diff:.6e}")
 
     if args.dump_state:

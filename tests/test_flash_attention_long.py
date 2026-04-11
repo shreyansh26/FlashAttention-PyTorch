@@ -92,6 +92,32 @@ class FlashAttentionLongTests(unittest.TestCase):
                 self.assertTrue(torch.isfinite(manual.dK).all(), msg=f"{version_name} manual dK produced non-finite values")
                 self.assertTrue(torch.isfinite(manual.dV).all(), msg=f"{version_name} manual dV produced non-finite values")
 
+    def test_fa3_fp8_long_forward(self) -> None:
+        version = get_version_module("fa3")
+        q, k, v, key_padding_mask = self._inputs(causal=False)
+        fp8_config = FlashAttentionConfig(block_size_q=128, block_size_kv=128, num_stages=2, fp8=True)
+
+        forward_result = version.forward(
+            q.detach(),
+            k.detach(),
+            v.detach(),
+            causal=False,
+            key_padding_mask=key_padding_mask,
+            config=fp8_config,
+        )
+        reference_out = reference_attention(
+            q.detach(),
+            k.detach(),
+            v.detach(),
+            causal=False,
+            key_padding_mask=key_padding_mask,
+        )
+
+        self.assertEqual(forward_result.out.shape, q.shape)
+        self.assertTrue(torch.isfinite(forward_result.out).all())
+        self.assertTrue(torch.allclose(forward_result.out, reference_out, atol=2e-1, rtol=2e-1))
+        self.assertTrue(forward_result.saved_state["fp8_enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

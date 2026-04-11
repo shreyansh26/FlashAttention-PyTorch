@@ -10,6 +10,7 @@ from flash_attention_core.script_utils import (
     choose_device,
     config_from_args,
     random_inputs,
+    validate_fp8_support,
 )
 
 
@@ -44,6 +45,7 @@ def main() -> None:
 
     device = choose_device()
     config = config_from_args(args)
+    validate_fp8_support(version=args.version, fp8=args.fp8, script_name="bench", benchmark_type=args.type)
     version = get_version_module(args.version)
     q, k, v, key_padding_mask = random_inputs(args, device=device)
 
@@ -58,6 +60,8 @@ def main() -> None:
         )
 
         def backward_run():
+            if args.fp8:
+                raise RuntimeError("unsupported")
             q_b = q.detach().clone()
             k_b = k.detach().clone()
             v_b = v.detach().clone()
@@ -100,16 +104,23 @@ def main() -> None:
             torch.autograd.grad(out.sum(), (q_b, k_b, v_b))
 
     forward_ms = benchmark(forward_run, warmup=args.warmup, rep=args.rep)
-    backward_ms = benchmark(backward_run, warmup=args.warmup, rep=args.rep)
+    backward_ms = None if (args.type == "flash" and args.fp8) else benchmark(backward_run, warmup=args.warmup, rep=args.rep)
     print(f"type={args.type} version={args.version} causal={args.causal} device={device}")
+    print(f"fp8={args.fp8}")
     print(f"forward_ms={forward_ms:.3f}")
-    print(f"backward_ms={backward_ms:.3f}")
+    if backward_ms is None:
+        print("backward_ms=unsupported")
+    else:
+        print(f"backward_ms={backward_ms:.3f}")
 
     if args.profile:
         activities = [torch.profiler.ProfilerActivity.CPU]
         if torch.cuda.is_available():
             activities.append(torch.profiler.ProfilerActivity.CUDA)
-        for pass_name, run in (("forward", forward_run), ("backward", backward_run)):
+        profiled_runs = [("forward", forward_run)]
+        if backward_ms is not None:
+            profiled_runs.append(("backward", backward_run))
+        for pass_name, run in profiled_runs:
             with torch.profiler.profile(
                 activities=activities,
                 on_trace_ready=torch.profiler.tensorboard_trace_handler(f"./profiler_logs/bench_log_{pass_name}"),

@@ -23,6 +23,7 @@ def add_common_arguments(
     parser.add_argument("--d", type=int, default=64, help="Head dimension")
     parser.add_argument("--block-size", type=int, default=128, help="Tile size used by the simplified kernels")
     parser.add_argument("--num-stages", type=int, default=2, help="Logical pipeline stages for FA3/FA4")
+    parser.add_argument("--fp8", action="store_true", help="Enable the educational FA3 FP8 forward path")
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     if include_type:
         parser.add_argument("--type", type=str, default="flash", help="flash/normal")
@@ -37,8 +38,26 @@ def config_from_args(args: argparse.Namespace) -> FlashAttentionConfig:
         block_size_q=args.block_size,
         block_size_kv=args.block_size,
         num_stages=args.num_stages,
+        fp8=args.fp8,
         keep_debug_state=True,
     )
+
+
+def validate_fp8_support(
+    *,
+    version: str,
+    fp8: bool,
+    script_name: str,
+    benchmark_type: str | None = None,
+) -> None:
+    if not fp8:
+        return
+    if version != "fa3":
+        raise ValueError("--fp8 is only implemented for --version fa3")
+    if script_name == "check_backward":
+        raise ValueError("FA3 FP8 backward is unsupported in this educational repo")
+    if script_name == "bench" and benchmark_type == "normal":
+        raise ValueError("--fp8 only applies to the FA3 flash path, not the normal reference benchmark")
 
 
 def choose_device() -> torch.device:

@@ -8,6 +8,7 @@ from flash_attention_core.script_utils import (
     choose_device,
     config_from_args,
     random_inputs,
+    validate_fp8_support,
 )
 
 
@@ -30,6 +31,7 @@ def main() -> None:
 
     device = choose_device()
     config = config_from_args(args)
+    validate_fp8_support(version=args.version, fp8=args.fp8, script_name="check_backward")
     version = get_version_module(args.version)
     q, k, v, key_padding_mask = random_inputs(args, device=device)
 

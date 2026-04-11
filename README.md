@@ -32,13 +32,20 @@ Where the simplified code leaves out real CUDA behavior such as TMA, WGMMA, TMEM
 ```bash
 python flash_attention.py
 python flash_attention.py --version fa3 --causal --dump-state
+python flash_attention.py --version fa3 --fp8 --dump-state
 ```
+
+`--fp8` is only implemented for `fa3`. It models the official FA3 FP8 forward
+path with simplified per-tile block quantization metadata in regular PyTorch.
+FP8 backward is intentionally unsupported, matching the released FA3 support
+boundary.
 
 ### Benchmark
 
 ```bash
 python bench.py --type flash --version fa2 --b 1 --h 2 --q_len 4096 --kv_len 4096 --d 128
 python bench.py --type normal --causal --b 1 --h 2 --q_len 4096 --kv_len 4096 --d 128
+python bench.py --type flash --version fa3 --fp8 --b 1 --h 2 --q_len 4096 --kv_len 4096 --d 128
 ```
 
 These implementations are intentionally simplified and educational rather than
@@ -48,7 +55,9 @@ salt.
 `bench.py` uses Triton's benchmark helper when running on CUDA and reports both
 `forward_ms` and `backward_ms`. For `--type flash`, the backward timing measures
 the simplified manual backward implementation. For `--type normal`, the
-backward timing measures PyTorch autograd on the reference attention path.
+backward timing measures PyTorch autograd on the reference attention path. For
+`fa3 --fp8`, only the forward timing is reported and backward is marked as
+unsupported.
 
 Add `--profile` to capture separate PyTorch profiler traces for the forward and
 backward benchmark paths.
@@ -59,6 +68,9 @@ backward benchmark paths.
 python check_backward.py
 python check_backward.py --version fa4 --causal --q_len 256 --kv_len 256 --d 64
 ```
+
+`check_backward.py --version fa3 --fp8` is intentionally unsupported because
+the educational FP8 mode only models the released FA3 forward path.
 
 ### Tests
 
