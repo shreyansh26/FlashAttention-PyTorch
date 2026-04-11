@@ -18,10 +18,10 @@ This repository contains simplified educational implementations of FlashAttentio
 * Causal attention via `--causal`.
 
 ## Versions
-* `fa1` - Baseline tiled online-softmax FlashAttention.
-* `fa2` - Sequence-parallel / split-Q ownership with deferred normalization and LSE-centered state.
-* `fa3` - Explicit staged pipeline with ping-pong tile buffers.
-* `fa4` - Explicit scheduler, main/softmax/correction phases, and conditional rescaling.
+* [`fa1`](flash_attention_core/versions/fa1.py) - Baseline tiled online-softmax FlashAttention.
+* [`fa2`](flash_attention_core/versions/fa2.py) - Sequence-parallel / split-Q ownership with deferred normalization and LSE-centered state.
+* [`fa3`](flash_attention_core/versions/fa3.py) - Explicit staged pipeline with ping-pong tile buffers.
+* [`fa4`](flash_attention_core/versions/fa4.py) - Explicit scheduler, main/softmax/correction phases, and conditional rescaling.
 
 Where the simplified code leaves out real CUDA behavior such as TMA, WGMMA, TMEM, FP8 paths, or multi-CTA coordination, the version modules call that out in comments.
 
