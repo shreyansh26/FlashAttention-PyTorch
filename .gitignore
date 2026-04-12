@@ -2,3 +2,5 @@ kineto
 profiler_logs
 __pycache__
 flash_attention_v2_wip.py
+AGENTS.md
+notes/
